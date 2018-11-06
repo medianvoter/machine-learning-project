@@ -1,0 +1,171 @@
+---
+title: "Machine Learning Project"
+author: "medianvoter"
+date: "6 November 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Executive Summary
+In this report I use machine learning to determine the activity type. The data are various measurements of participants performing bicep curls correctly (Class A), and wrongly (Classes B-E), and this report aims to develop a model to predict which type class of activity a person performed based on measurements made by accelerometers on the belt, forearm, arm, and dumbell. I find that quadratic discriminant analysis is the most predictive model, with an accuracy rate of 0.897 on the cross-validation set. As the QDA model is selected specifically because it performed well on the cross-validation set, I expect out-of-sample accuracy to be smaller and out-of-sample error to be greater (> 0.103). The github repository is [here](https://github.com/medianvoter/machine-learning-project).
+```{r, echo = FALSE, message = FALSE}
+library(dplyr)
+library(caret)
+library(ggplot2)
+library(randomForest)
+
+rm(list = ls())
+trainUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+trainFile <- "pml-training.csv"
+testFile <- "pml-testing.csv"
+
+if(!file.exists(trainFile)) download.file(trainUrl, trainFile)
+if(!file.exists(testFile))  download.file(testUrl, testFile)
+```
+## Data Loading and Preprocessing
+
+I first load the necessary packages and download the file (code not shown). I load both training and test files and check their dimensions to ensure they match. I also visually inspect the training file to understand the data.
+```{r, echo = FALSE, results = "hide"}
+data <- read.csv(trainFile)
+dim(data)
+
+test <- read.csv(testFile)
+dim(test) 
+```
+```{r}
+table(data$classe) # Outcome
+```
+
+```{r, eval = FALSE, results = "hide"}
+str(test)
+```
+Visual inspection and running `str(test)` (output not shown) reveals that some data cleaning is necessary. First, there are variables that look numeric but for the fact that some take the value of "#DIV/0!". Experience with Excel tells me that this is a divide-by-zero error message. I choose to replace these numbers with 0. In order to ensure that my eventual prediction model can use the test data, I perform the same data processing step on the test data. Note, however, that I do not take extract information from the test data; the test data is processed according to the conditions of the training data. 
+```{r, warning = FALSE}
+# Replacing "#DIV/0!" with "0"; converting them from factors to to characters 
+# first as it is easier to handle
+variables <- names(data)[6:159]
+for(v in variables) {
+    if(is.factor(data[[v]])) {
+        data[[v]] <- as.character(data[[v]])
+        test[[v]] <- as.character(test[[v]]) ##
+    }
+    if(is.character(data[[v]])) {
+        data[[v]][data[[v]] == "#DIV/0!"] <- "0"
+        data[[v]] <- as.numeric(data[[v]])
+        test[[v]][test[[v]] == "#DIV/0!"] <- "0"
+        test[[v]] <- as.numeric(test[[v]]) 
+    }
+}
+```
+Next, I examine missing values: 
+```{r}
+table(apply(data, 2, function(x) {mean(is.na(x))})) # many have close to 97.9% na
+```
+  
+As shown above, missing values are a problem. Many variables are > 97.9% missing, but the rest of the variables have no missing values. As imputing so many values would probably add more noise than information, I choose to drop those variables. 
+```{r}
+variables <- names(data)
+for(v in variables) {
+   if(mean(is.na(data[[v]])) > 0.9) {
+       data <- select(data, -v)
+       test <- select(test, -v)
+   }
+}
+table(apply(data, 2, function(x) {mean(is.na(x))}))
+```
+After such processing there are no missing values in the training data. 
+```{r}
+dim(data)
+```
+This leaves us with 19,622 observations and 59 variables. Next, I partition 30% of the training data for cross-validation/model selection. For simplicity, I use the same 30% for cross validation, instead of performing K-fold cross validation.
+```{r}
+set.seed(8675309)
+inTrain <- createDataPartition(y = data$classe, p = 0.7, list = F)
+training <- data[inTrain, ]
+cv <- data[-inTrain, ]
+```
+```{r, echo = FALSE, results = FALSE}
+rm(data, inTrain, testUrl, trainFile, trainUrl, testFile, v, variables)
+```
+## Model Building
+Next, I perform some exploratory analysis. Unfortunately, there are too many variables and observations to show meaningful plots. Looking at the variables, I developed a sense of which variables provide no predictive value, and I used plots to confirm that suspicion. An example is shown below. 
+```{r, fig.height = 4, fig.width = 4}
+qplot(jitter(as.numeric(training$user_name)), jitter(as.numeric(training$classe)), size = I(0.01)) + 
+    scale_x_continuous(name = "user_name", breaks = c(1, 2, 3, 4, 5, 6), 
+                       labels = c("adelmo", "carlitos", "charles", "eurico", "jeremy", "pedro")) + 
+    scale_y_continuous(name = "classe", 
+                       breaks = c(1, 2, 3, 4, 5), labels = c("A", "B", "C", "D", "D"))
+```
+  
+As shown above, it is not entirely clear whether the user's name has a large impact on the outcome. Moreover, there is no guarantee that the test data will consist of the same users in the training data. Thus, I do not use *user_name* as a predictor. I also drop similar variables to do with the timestamp and window. Thus, I select the predictors.
+```{r}
+predictors <- names(training)[7:59]
+```
+Next, I examine a variety of prediction models: trees, linear discriminant analysis, and quadratic discriminant analysis. 
+
+### Trees
+I first examine classification and regression trees.  
+```{r, cache = TRUE}
+cart <- train(classe ~ ., method = "rpart", data = select(training, predictors))
+print(cart$finalModel)
+confusionMatrix(predict(cart), training$classe)$overall[1]
+```
+As shown above, the model never predicts the outcome D. Furthermore, the model has poor training set accuracy (0.499). 
+
+### Linear Discriminant Analysis
+```{r, cache = TRUE}
+lda <- train(classe ~ ., data = select(training, predictors), method = "lda")
+confusionMatrix(predict(lda), training$classe)$overall[1]
+```
+As shown, LDA has relatively good training set accuracy (0.703).
+
+### Quadratic Discriminant Analysis
+```{r, cache = TRUE}
+qda <- train(classe ~ ., data = select(training, predictors), method = "qda")
+confusionMatrix(predict(qda), training$classe)$overall[1]
+```
+As shown, QDA has the best raining set accuracy thus far (0.902).
+
+### Stacking
+```{r, cache = TRUE}
+cartPred <- predict(cart, newdata = cv) # needed for stacking
+ldaPred <- predict(lda, newdata = cv)
+qdaPred <- predict(qda, newdata = cv)
+
+combinedData <- data.frame(cartPred, qdaPred, ldaPred, classe = cv$classe)
+combined <- train(classe ~ ., method = "gam", data = combinedData)
+combinedPred <- predict(combined, combinedData)
+confusionMatrix(combinedPred, combinedData$classe)$overall[1]
+```
+Surprisingly, stacking the models results in a far worse training set accuracy (0.445). 
+  
+Please note that I also tried random forest, boosting, and naive Bayes, but they took too long to run on my computer. 
+
+## Cross Validation and Model Selection
+Next, I use the cross-validation set for model selection. As the models are tuned to the training set, using training set accuracy would be an improper way to select the model. Thus, I use model accuracy on the cross-validation set. 
+```{r}
+confusionMatrix(cartPred, cv$classe)$overall[1]
+confusionMatrix(ldaPred, cv$classe)$overall[1]
+confusionMatrix(qdaPred, cv$classe)$overall[1]
+confusionMatrix(combinedPred, cv$classe)$overall[1]
+```
+As shown above, QDA is the best predictor, with 0.897 accuracy in the cross-validation set.  
+
+## Expected Out of Sample Error
+I expect out-of-sample error to be higher and out-of-sample accuracy to be lower (< 0.897). That is because I already used the cross-validation set to choose the best model, so this model is already optimized to the cross-validation set. Thus, it is likely that out-of-sample error is higher (> 0.103) and out-of-sample accuracy to be lower (< 0.897).
+
+## Predictions
+Next, I perform predictions on the test data. 
+```{r}
+testPred <- predict(qda, newdata = test)
+for(i in 1:20) print(paste(i, ":", testPred[i]))
+```
+Surprisingly entering the predictions into the quiz yields an accuracy of 0.95, higher than expected.
+
+## Conclusion
+I found that quadratic discriminant analysis is the most accurate predictive model, with an accuracy rate of 0.897 on the cross-validation set. As the QDA model is selected specifically because it performed well on the cross-validation set, I expect out-of-sample accuracy to be smaller and out-of-sample error to be greater (> 0.103). However, test set prediction accuracy (0.95) exceeded my expectations. 
+  
+Thanks for reading!
