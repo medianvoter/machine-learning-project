@@ -97,7 +97,7 @@ qplot(jitter(as.numeric(training$user_name)), jitter(as.numeric(training$classe)
     scale_x_continuous(name = "user_name", breaks = c(1, 2, 3, 4, 5, 6), 
                        labels = c("adelmo", "carlitos", "charles", "eurico", "jeremy", "pedro")) + 
     scale_y_continuous(name = "classe", 
-                       breaks = c(1, 2, 3, 4, 5), labels = c("A", "B", "C", "D", "D"))
+                       breaks = c(1, 2, 3, 4, 5), labels = c("A", "B", "C", "D", "E"))
 ```
   
 As shown above, it is not entirely clear whether the user's name has a large impact on the outcome. Moreover, there is no guarantee that the test data will consist of the same users in the training data. Thus, I do not use *user_name* as a predictor. I also drop similar variables to do with the timestamp and window. Thus, I select the predictors.
